@@ -1,11 +1,18 @@
 """
-SNN-2 training, matching the reference notebook pipeline (cells 83/105/129)
-as closely as possible in pure NumPy:
-  - FEATURES lists restored verbatim from the notebook, including the 12
-    extra "raw Esri alias" columns in the 0.25mi resolution (11 are exact
-    duplicates of data we already have under a renamed column; one --
-    veteran % -- is a genuinely different column we have but hadn't
-    included before).
+SNN-2 training, matching the reference notebook pipeline (cells 47/48, 61,
+65) as closely as possible in pure NumPy:
+  - FEATURES lists restored verbatim from the notebook, including the 0.25mi
+    resolution's 12 extra "raw Esri" columns from outputLayer_0_7.csv's own
+    second enrichment pass. These are genuinely DIFFERENT values from the
+    similarly-named renamed columns (a different Esri/ACS reference vintage),
+    not duplicates -- prep.py's load_and_merge_hexes() now merges them in
+    directly from the outputLayer file under their real long names, so they
+    arrive with their own true values. An earlier version of this pipeline
+    treated them as exact duplicates and faked them via a QUARTER_ALIASES
+    dict that copied the renamed column's value into the long-name column,
+    which silently destroyed the real (and predictive) values RF was
+    learning from in the reference notebook -- that's what was suppressing
+    quarter-resolution's RF/SNN-2 AUC (0.61/0.71 faked vs 0.74/0.78 real).
   - SNN-1 main-effect layer trained first (rounds=4, matching reference),
     then FROZEN -- SNN-2 only fits interaction subnets on the residual,
     it does not retrain the main effects in the interaction layer's
@@ -35,25 +42,6 @@ from snn_core import train_additive_snn, train_interaction_snn, select_top_pairs
 
 warnings.filterwarnings("ignore")
 np.random.seed(42)
-
-# Aliases needed only for the 0.25mi resolution: 11 of these 12 raw-Esri-named
-# columns are exact duplicates of a column we already have under its renamed
-# name; "2023 Civilian Pop 18+: Veteran..." is the genuinely distinct
-# first-Esri-pass veteran% (pct_veterans, as opposed to pct_veterans_2).
-QUARTER_ALIASES = {
-    "2024 Total Crime Index": "total_crime_est",
-    "2024 Total Population": "total_population",
-    "2024 Unemployment Rate: Index": "unemployment_rate_idx",
-    "2023 HHs w/1+ Persons w/Disability (ACS 5-Yr): Percent": "pct_household_disability",
-    "2023 HHs w/Public Assist Income (ACS 5-Yr): Percent": "pct_public_assistance",
-    "2023 Pop w/Income Below Poverty Level (ACS 5-Yr): Percent": "pct_below_poverty",
-    "2023 HHs/Gross Rent 50+% of Income (ACS 5-Yr): Percent": "pct_severe_rent_burden",
-    "2023 Pop 25+: No Schooling (ACS 5-Yr): Percent": "pct_no_schooling",
-    "2023 Pop 35-64: No Health Insurance (ACS 5-Yr): Percent": "pct_no_health_insurance",
-    "2023 Civilian Pop 18+: Veteran (ACS 5-Yr): Percent": "pct_veterans",
-    "2023 Pop 25+: HS Diploma (ACS 5-Yr): Percent": "pct_hs_grad",
-    "2030 Value of Credit Card Debt: Index": "esri_market_idx_14068_forecast",
-}
 
 FEATURES_BY_RES = {
     "quarter": [
@@ -129,10 +117,6 @@ def run_resolution(res_name: str, hex_csv: str, out_dir: str = "models",
                     top_k: int = TOP_K_INTERACTIONS):
     print(f"\n{'='*60}\n{res_name.upper()} -- SNN-2\n{'='*60}")
     df = pd.read_csv(hex_csv)
-
-    if res_name == "quarter":
-        for alias, source in QUARTER_ALIASES.items():
-            df[alias] = df[source]
 
     base_features = FEATURES_BY_RES[res_name]
     missing = [f for f in base_features if f not in df.columns]

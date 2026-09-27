@@ -19,13 +19,32 @@ streamlit run scripts/app.py
 ## Architecture fidelity notes
 
 This build was reconciled against the reference notebook pipeline
-(cells 83/105/129) for architectural fidelity:
+(`Latest_Tent_analysis.ipynb`, cells 7-69 for quarter, 50-69 for half/
+three_fourth-equivalent) for both data and architectural fidelity:
 
+- **Labels come from the outputLayer join, not the enriched export's own
+  `Join_Count`.** Each resolution's enriched export (`*_variables_and_
+  tent(s)_geo_enriched.csv`) carries a stale `Join_Count` from a
+  different/earlier spatial join. `prep.py` now merges each export with
+  its authoritative `outputLayer_0_{7,9,10}.csv` join table on
+  `OBJECTID` and takes `Join_Count` from *that* table — this reproduces
+  the paper's tent-present rates (25.21% / 38.59% / 46.38%) exactly.
+  (An earlier version of this pipeline grouped the enriched export by
+  `GRID_ID` and used its own `Join_Count`, which gave the wrong, higher
+  rates of 32.9% / 47.2% / 54.7% — see "Resolved gaps" below.)
+- **`GRID_ID` is not the same address scheme in both files** for the
+  same physical hex (`OBJECTID` is the reliable cross-file key; the two
+  files' `GRID_ID` values agree on only ~0.14% of hexes). `prep.py` keeps
+  the enriched export's own `GRID_ID` (paired with that row's own
+  lat/lon) for centroid reconstruction, while still using the
+  outputLayer's `Join_Count` for the label.
 - **Feature lists restored verbatim**, including the 0.25mi resolution's
-  12 extra "raw Esri alias" columns (11 are exact duplicates of data
-  already present under a renamed column; one — veteran % — is a
-  genuinely distinct column that was available but not previously
-  included).
+  12 extra "raw Esri" columns. These are **not** duplicates of the
+  similarly-named renamed columns — `outputLayer_0_7.csv` carries its
+  own, genuinely different second Esri/ACS enrichment pass (a different
+  reference vintage), and `prep.py` now merges those columns in under
+  their real long names with their own true per-hex values, rather than
+  faking them as copies (see "Resolved gaps" below).
 - **True 2D joint-RBF interaction kernel** (`BivariateRBFSubNet`, 6x6=36
   basis functions per pair, taking both raw feature values as separate
   inputs), matching the reference's `SubNet2` — not a collapsed
@@ -42,20 +61,45 @@ This build was reconciled against the reference notebook pipeline
   blocking based on a methodological read of the paper's prose, which
   turned out not to reflect what the actual reference code does.
 
-### Known remaining gap
+### Current fidelity
 
-Our retrained AUCs (quarter 0.786, half 0.811, three_fourth 0.848) still
-don't exactly match the reference run (0.776 / 0.714 / 0.723) or the
-paper's Table 2. Root cause identified: the reference notebook's
-in-memory `y_binary` has tent-present rates (25.2% / 38.6% / 46.4%) that
-exactly match the paper's Table 2 — ours (32.9% / 47.2% / 54.7%) are
-higher. The underlying detection points are confirmed identical (1906 of
-1908 verified points cross-match by filename), so the gap is in an
-upstream point-to-hex spatial join step from earlier notebook cells
-(1-82) that build `X_final`/`y_binary`, which weren't available to
-reconstruct exactly. Everything downstream of that label (feature lists,
-interaction architecture, training procedure) has been matched as
-closely as possible.
+Retrained on the corrected data/labels, matched against the reference
+notebook's own printed output for each resolution:
+
+| Resolution   | Hexes | Tent-present | RF teacher AUC (ours / ref) | SNN-2 AUC (ours / ref) |
+|--------------|------:|-------------:|:----------------------------|:------------------------|
+| quarter      | 1448  | 25.21%       | 0.7423 / 0.7423 (exact)     | 0.7788 / 0.776          |
+| half         |  767  | 38.59%       | 0.6054 / 0.6054 (exact)     | 0.7152 / 0.714          |
+| three_fourth |  539  | 46.38%       | 0.6143 / 0.6143 (exact)     | 0.7207 / 0.723          |
+
+Top selected interaction pair also matches the reference exactly for
+half (`pct_public_assistance × osm_amenity_count`) and three_fourth
+(`business_sites_count × bare_ground_proxy_pct`); quarter's top pair
+(`2023 Pop w/Income Below Poverty Level (ACS 5-Yr): Percent ×
+police_station_count`) was not independently cross-checked against a
+notebook printout (cell 49's own top-pair line was truncated in the
+available output) but its RF/SNN-2 AUCs match to 4 decimal places /
+within 0.003, so the underlying data and training are confirmed correct.
+
+### Resolved gaps (this rebuild)
+
+Two independent bugs were found and fixed against a fresh, complete copy
+of the reference notebook and fresh raw exports:
+
+1. **Wrong label source** (all three resolutions) — described above.
+   Fixed in `prep.py`'s `load_and_merge_hexes()`.
+2. **Faked quarter-resolution "raw Esri" columns** — a previous version
+   of `train_snn2.py` carried a `QUARTER_ALIASES` dict that overwrote
+   the 12 raw-Esri-named columns with copies of the similarly-named
+   *renamed* columns, on the assumption they were exact duplicates. They
+   are not: the real columns come from `outputLayer_0_7.csv`'s own,
+   independent second enrichment pass and disagree with the renamed
+   columns on ~99% of rows. Faking them destroyed real signal the
+   reference RF was trained on, which is why quarter's RF teacher AUC
+   was stuck at 0.61 (vs the reference's 0.74) even after the label fix
+   above. `prep.py` now merges these columns in directly under their
+   real long names with their genuine values, and `QUARTER_ALIASES` has
+   been removed from `train_snn2.py` entirely.
 
 ## What's in here
 
@@ -116,4 +160,7 @@ variables are ever touched.
 
 1. Hex centroids/boundaries are reconstructed/approximate, not the
    original ArcGIS tessellation geometry.
-2. See "Known remaining gap" above re: exact AUC reproduction.
+2. Quarter's top selected interaction pair wasn't independently
+   cross-checked against a notebook printout (see "Current fidelity"
+   above) — everything else has been verified against the reference
+   notebook's own printed output.

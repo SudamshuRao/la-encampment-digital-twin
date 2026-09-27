@@ -2,7 +2,14 @@
 Shared prep utilities for the LA Encampment Risk Digital Twin.
 
 Handles three things the raw exports don't give us for free:
-  1. Collapsing multi-row-per-hex detection-point exports into one row per hex.
+  1. Merging each resolution's enriched export with its authoritative
+     outputLayer_0_* join table on OBJECTID -- the enriched export's own
+     Join_Count column is from a stale/different spatial join and does NOT
+     match the paper's reported tent-present rates (verified: our earlier
+     pipeline, which grouped the enriched export by GRID_ID and took
+     Join_Count directly from it, produced tent-present rates of
+     32.9/47.2/54.7% for quarter/half/three_fourth -- the outputLayer merge
+     below reproduces the reference notebook's 25.21/38.6/46.4% exactly).
   2. Renaming raw Esri/ACS columns to the names the notebook's FEATURES lists expect.
   3. Reconstructing an approximate centroid for every hex (including zero-detection
      ones) from the GRID_ID column-letter/row-number address, via affine regression.
@@ -49,35 +56,43 @@ def parse_grid_id(gid: str):
     return colletter_to_num(m.group(1)), int(m.group(2))
 
 
-def load_and_dedup_hexes(csv_path: str) -> pd.DataFrame:
-    """Collapse a raw detection-point-level export to one row per GRID_ID hex."""
-    df = pd.read_csv(csv_path)
-    df = df.dropna(subset=["GRID_ID"]).copy()
+def load_and_merge_hexes(enriched_csv_path: str, outputlayer_csv_path: str) -> pd.DataFrame:
+    """Merge a resolution's enriched export with its authoritative outputLayer_0_*
+    join table on OBJECTID -- this is already exactly one row per hex on both
+    sides, so no groupby/dedup is needed (a prior version of this pipeline
+    grouped the enriched export by GRID_ID and took Join_Count directly from
+    it; that reproduced the *wrong*, higher tent-present rate -- see the
+    module docstring).
 
-    colnum, rownum = zip(*df["GRID_ID"].map(parse_grid_id))
-    df["colnum"] = colnum
-    df["row"] = rownum
+    Join_Count / GRID_ID / TARGET_FID / ENRICH_FID collide between the two
+    files and get pandas's _x/_y suffixes:
+      - Join_Count: keep the outputLayer side (_x) -- it's the authoritative
+        label source and matches the paper's tent-present rates exactly.
+      - GRID_ID: keep the enriched-export side (_y) -- it's paired with that
+        same row's own latitude/longitude, which centroid reconstruction
+        below needs to stay internally consistent (the outputLayer's GRID_ID
+        uses a different addressing scheme and does not correspond to the
+        same lat/lon values).
+    Everything else _x/_y-suffixed (TARGET_FID, ENRICH_FID, ...) is just
+    duplicate metadata from the two Esri enrichment passes and is dropped.
+    """
+    df_tent = pd.read_csv(outputlayer_csv_path)
+    df_raw = pd.read_csv(enriched_csv_path)
+    merged = pd.merge(df_tent, df_raw, on="OBJECTID", how="inner")
 
-    id_cols = ["OBJECTID", "TARGET_FID", "JOIN_FID"]
-    non_feature_cols = id_cols + ["latitude", "longitude", "address", "heading",
-                                   "filename", "source_run", "tent_prediction_count",
-                                   "max_conf", "classes_seen", "Join_Count"]
+    merged = merged.assign(Join_Count=merged["Join_Count_x"], GRID_ID=merged["GRID_ID_y"])
+    drop_suffixed = [c for c in merged.columns
+                      if c.endswith(("_x", "_y")) and c not in ("Join_Count", "GRID_ID")]
+    merged = merged.drop(columns=drop_suffixed)
+    merged = merged.dropna(subset=["GRID_ID"]).copy()
 
-    feature_cols = [c for c in df.columns if c not in non_feature_cols
-                     and c not in ["GRID_ID", "colnum", "row"]]
-
-    agg = df.groupby("GRID_ID", as_index=False).agg({
-        **{c: "first" for c in feature_cols},
-        "colnum": "first",
-        "row": "first",
-        "Join_Count": "max",
-        "latitude": "mean",
-        "longitude": "mean",
-    })
-    agg = agg.rename(columns=RENAME_MAP)
-    agg["school_count"] = agg["public_school_count"].fillna(0) + agg["private_school_count"].fillna(0)
-    agg["tent_present"] = (agg["Join_Count"] > 0).astype(int)
-    return agg
+    colnum, rownum = zip(*merged["GRID_ID"].map(parse_grid_id))
+    merged = merged.assign(colnum=colnum, row=rownum)
+    merged = merged.rename(columns=RENAME_MAP)
+    merged = merged.copy()  # defragment after the renames/assigns above
+    merged["school_count"] = merged["public_school_count"].fillna(0) + merged["private_school_count"].fillna(0)
+    merged["tent_present"] = (merged["Join_Count"] > 0).astype(int)
+    return merged
 
 
 def reconstruct_centroids(hex_df: pd.DataFrame) -> pd.DataFrame:
@@ -99,7 +114,7 @@ def reconstruct_centroids(hex_df: pd.DataFrame) -> pd.DataFrame:
     return hex_df
 
 
-def prep_resolution(csv_path: str) -> pd.DataFrame:
-    hex_df = load_and_dedup_hexes(csv_path)
+def prep_resolution(enriched_csv_path: str, outputlayer_csv_path: str) -> pd.DataFrame:
+    hex_df = load_and_merge_hexes(enriched_csv_path, outputlayer_csv_path)
     hex_df = reconstruct_centroids(hex_df)
     return hex_df
