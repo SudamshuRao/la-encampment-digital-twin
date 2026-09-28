@@ -105,9 +105,12 @@ of the reference notebook and fresh raw exports:
 
 ```
 data/
-  hex_lookup_{quarter,half,three_fourth}.csv   # one row per hex: all raw
-    enrichment columns (+ quarter's 12 aliased Esri columns) + reconstructed
-    centroid + SNN-2 baseline_risk + top_interaction_a/b/val for the map
+  hex_lookup_{quarter,half,three_fourth}.csv   # one row per hex WITH model
+    data: all raw enrichment columns (+ quarter's 12 aliased Esri columns)
+    + reconstructed centroid + SNN-2 baseline_risk + top_interaction_a/b/val
+  hex_geom_{quarter,half,three_fourth}.geojson  # real ArcGIS hex polygons,
+    EVERY hex ArcGIS exported (~2x hex_lookup's row count -- see "Real hex
+    geometry" below), each tagged OBJECTID / GRID_ID / has_data
 
 models/
   snn2_{res}.json                  # main_nets + pair_nets + both scalers
@@ -127,12 +130,41 @@ scripts/
                            # doc's frozen/non-frozen variable-role table) --
                            # runs the greedy optimizer on every hex in the
                            # highest-risk N%, then aggregates the results
-  hexgeom.py             # hexagon polygon geometry + tooltip properties
+  hexgeom.py             # loads real ArcGIS hex geometry (hex_geom_*.geojson)
+                          # and merges it with live model data for the map
   labels2.py             # human-readable names/groups for all features
                           # incl. the quarter-only Esri alias columns
   app.py                 # the Streamlit app (map/headline always visible,
                           # Scenarios/Sliders/Contributions/Optimizer in tabs)
 ```
+
+## Real hex geometry (replacing the reconstructed approximation)
+
+The map now renders each resolution's **actual ArcGIS-exported hex
+polygons** (`data/hex_geom_{res}.geojson`), not the reconstructed
+regular-hexagon approximation the app used before. Two things fall out of
+that:
+
+- **Every ArcGIS hex is kept, not just the ones with model data.** Roughly
+  half of each resolution's raw hexes (1430/2878 quarter, 1544/2311 half,
+  1611/2150 three_fourth) never had a matching row in both the enriched
+  export and its `outputLayer_0_*` join table, so they carry no
+  `baseline_risk`/`tent_present`. Dropping them (the old behavior) made the
+  half/three_fourth maps look like disconnected islands with real gaps
+  between clusters; they're now kept in the geometry file and rendered as
+  flat "no data" hexes (gray fill, no risk color, non-clickable) so the
+  grid reads as one contiguous surface, the same way the reference deck's
+  own 0.25mi maps do — since there genuinely is no risk value for those
+  hexes, not because of a rendering bug.
+- **GRID_ID is not a unique key.** ~60% of hexes share their `GRID_ID`
+  address (e.g. quarter's OBJECTID 2 and 3 are both `AQ-81`) with at least
+  one other, physically different hex — an artifact of the raw export, not
+  something introduced here. `hexgeom.py`'s geometry merge joins on
+  `OBJECTID` (the only column that's 1:1 with a real hex in both the
+  geometry file and `hex_lookup_{res}.csv`) to avoid drawing the wrong
+  polygon's data. The rest of the app (hex selection via click / "jump to
+  a hex" dropdown / the optimizer) still keys off `GRID_ID`, which is a
+  pre-existing ambiguity worth knowing about but out of scope for this fix.
 
 ## Two ways to explore "what reduces risk," side by side
 

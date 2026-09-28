@@ -21,7 +21,7 @@ from folium.plugins import Fullscreen
 from streamlit_folium import st_folium
 
 from snn2_inference import SNN2Model
-from hexgeom import hexes_to_geojson
+from hexgeom import load_geom, hexes_to_geojson_real
 from labels2 import (
     FEATURE_LABELS_L2, FEATURE_GROUPS_L2, ACTIONABLE_GROUPS_L2,
     GROUP_ORDER_L2, RESOLUTION_LABELS, interaction_label,
@@ -66,7 +66,7 @@ def risk_color(risk, rmin, rmax):
     return RISK_COLORMAP(min(max(t, 0.0), 1.0))
 
 
-def build_map(hex_df, selected_grid_id, current_risk_override=None, basemap="light", height=520):
+def build_map(hex_df, res, selected_grid_id, current_risk_override=None, basemap="light", height=520):
     rmin, rmax = hex_df["baseline_risk"].quantile([0.05, 0.95])
     center_lat, center_lon = hex_df["centroid_lat"].mean(), hex_df["centroid_lon"].mean()
 
@@ -78,13 +78,21 @@ def build_map(hex_df, selected_grid_id, current_risk_override=None, basemap="lig
     if current_risk_override is not None and selected_grid_id is not None:
         display_df.loc[display_df["GRID_ID"] == selected_grid_id, "baseline_risk"] = current_risk_override
 
-    gj = hexes_to_geojson(display_df, risk_col="baseline_risk")
+    gj = hexes_to_geojson_real(load_geom(res), display_df, risk_col="baseline_risk")
     quiet_border = "#ffffff" if basemap == "dark" else "#4d4d4d"
     selected_border = "#00e5ff"
+    no_data_fill = "#3a3f4b" if basemap == "dark" else "#dcdcdc"
+    no_data_border = "#55596a" if basemap == "dark" else "#bbbbbb"
 
     def style_fn(feature):
-        gid = feature["properties"]["GRID_ID"]
-        risk = feature["properties"]["risk"]
+        props = feature["properties"]
+        if not props["has_data"]:
+            return {
+                "fillColor": no_data_fill, "color": no_data_border,
+                "weight": 0.2, "fillOpacity": 0.35, "opacity": 0.25,
+            }
+        gid = props["GRID_ID"]
+        risk = props["risk"]
         is_selected = gid == selected_grid_id
         return {
             "fillColor": risk_color(risk, rmin, rmax),
@@ -96,9 +104,9 @@ def build_map(hex_df, selected_grid_id, current_risk_override=None, basemap="lig
 
     folium.GeoJson(
         gj, style_function=style_fn,
-        highlight_function=lambda f: {"weight": 2.5, "color": selected_border},
+        highlight_function=lambda f: {"weight": 2.5, "color": selected_border} if f["properties"]["has_data"] else {},
         tooltip=folium.GeoJsonTooltip(
-            fields=["GRID_ID", "risk", "top_interaction"],
+            fields=["GRID_ID", "risk_display", "top_interaction"],
             aliases=["Hex", "Predicted risk", "Top interaction"],
             style=("background-color: white; color: #333; font-family: sans-serif; "
                    "font-size: 13px; padding: 6px; border-radius: 4px;"),
@@ -269,7 +277,7 @@ def render_optimizer(model, feat_summary, res, gid):
                 st.rerun()
 
 
-def build_delta_map(hex_df, results_df, basemap="light"):
+def build_delta_map(hex_df, res, results_df, basemap="light"):
     merged = hex_df.merge(results_df[["GRID_ID", "delta", "is_target"]], on="GRID_ID")
     merged["baseline_risk"] = merged["delta"]  # reuse the risk_col slot for delta
 
@@ -280,11 +288,20 @@ def build_delta_map(hex_df, results_df, basemap="light"):
     Fullscreen(position="topright").add_to(m)
 
     delta_cmap = cm.LinearColormap(colors=["#d73027", "#f7f7f7", "#1a9850"], vmin=-max_abs, vmax=max_abs)
-    gj = hexes_to_geojson(merged, risk_col="baseline_risk")
+    gj = hexes_to_geojson_real(load_geom(res), merged, risk_col="baseline_risk")
+    no_data_fill = "#3a3f4b" if basemap == "dark" else "#dcdcdc"
+    no_data_border = "#55596a" if basemap == "dark" else "#bbbbbb"
+    target_lookup = merged.set_index("GRID_ID")["is_target"]
 
     def style_fn(feature):
-        risk = feature["properties"]["risk"]  # actually delta here
-        is_target = merged.loc[merged["GRID_ID"] == feature["properties"]["GRID_ID"], "is_target"].iloc[0]
+        props = feature["properties"]
+        if not props["has_data"]:
+            return {
+                "fillColor": no_data_fill, "color": no_data_border,
+                "weight": 0.2, "fillOpacity": 0.35, "opacity": 0.25,
+            }
+        risk = props["risk"]  # actually delta here
+        is_target = bool(target_lookup.get(props["GRID_ID"], False))
         return {
             "fillColor": delta_cmap(risk),
             "color": "#4d4d4d" if basemap == "light" else "#ffffff",
@@ -296,7 +313,7 @@ def build_delta_map(hex_df, results_df, basemap="light"):
     folium.GeoJson(
         gj, style_function=style_fn,
         tooltip=folium.GeoJsonTooltip(
-            fields=["GRID_ID", "risk"], aliases=["Hex", "ΔRisk (+ = improved)"],
+            fields=["GRID_ID", "risk_display"], aliases=["Hex", "ΔRisk (+ = improved)"],
             style=("background-color: white; color: #333; font-family: sans-serif; "
                    "font-size: 13px; padding: 6px; border-radius: 4px;"),
         ),
@@ -352,7 +369,7 @@ def render_scenarios(model, hex_df, feat_summary, res, basemap):
         col_map, col_usage = st.columns([3, 2])
         with col_map:
             st.markdown("**ΔRisk map**")
-            m = build_delta_map(hex_df, results, basemap=basemap)
+            m = build_delta_map(hex_df, res, results, basemap=basemap)
             st_folium(m, height=480, width=None, returned_objects=[], key=f"scen_map_{res}")
         with col_usage:
             st.markdown("**Which variables got recommended, across targeted hexes**")
@@ -409,12 +426,12 @@ def main():
     col_map, col_headline = st.columns([3, 2])
 
     with col_map:
-        m = build_map(hex_df, st.session_state.selected_grid_id, current_risk_override=risk, basemap=basemap)
+        m = build_map(hex_df, res, st.session_state.selected_grid_id, current_risk_override=risk, basemap=basemap)
         map_state = st_folium(m, height=520, width=None, returned_objects=["last_active_drawing"])
         clicked = map_state.get("last_active_drawing")
-        if clicked and clicked.get("properties", {}).get("GRID_ID"):
+        if clicked and clicked.get("properties", {}).get("has_data"):
             clicked_gid = clicked["properties"]["GRID_ID"]
-            if clicked_gid != st.session_state.selected_grid_id:
+            if clicked_gid != st.session_state.selected_grid_id and clicked_gid in hex_df["GRID_ID"].values:
                 st.session_state.selected_grid_id = clicked_gid
                 st.session_state.slider_values = None
                 st.session_state.opt_result = None
