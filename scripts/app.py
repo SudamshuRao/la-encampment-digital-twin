@@ -191,6 +191,20 @@ def _top_n_markdown(ranked, n, title):
 INFO_BLOCK_HEIGHT = 290  # fixed so both charts below line up regardless of text length
 
 
+def _set_sliders(res, gid, model, new_values):
+    """Replace slider_values AND clear each slider widget's own stored
+    state. A slider with an explicit key only honors `value=` the first
+    time it's created -- once dragged, Streamlit remembers its position
+    under that key and ignores `value=` on every later rerun, so setting
+    slider_values alone updates "Predicted risk" but leaves the widgets
+    showing their old positions (which then overwrite slider_values right
+    back). Call this instead of assigning st.session_state.slider_values
+    directly whenever sliders should visibly jump to new values."""
+    for f in model.base_features:
+        st.session_state.pop(f"slider_{res}_{gid}_{f}", None)
+    st.session_state.slider_values = new_values
+
+
 def render_contributions(model, contribs):
     main_contribs = {f: v for f, v in contribs.items() if f in model.base_features}
     inter_contribs = {f: v for f, v in contribs.items() if f not in model.base_features}
@@ -309,14 +323,14 @@ def render_optimizer(model, feat_summary, res, gid):
             st.line_chart(pd.Series(result["risk_trajectory"], name="risk"))
             b1, b2 = st.columns(2)
             if b1.button("Apply all to sliders"):
-                st.session_state.slider_values = dict(result["optimized_features"])
+                _set_sliders(res, gid, model, dict(result["optimized_features"]))
                 st.session_state.opt_result = None
                 st.rerun()
             if b2.button("Apply actionable-only to sliders"):
                 updated = dict(st.session_state.slider_values)
                 for s in result["actionable_subset_steps"]:
                     updated[s["feature"]] = s["to_value"]
-                st.session_state.slider_values = updated
+                _set_sliders(res, gid, model, updated)
                 st.session_state.opt_result = None
                 st.rerun()
         else:
@@ -331,7 +345,7 @@ def render_optimizer(model, feat_summary, res, gid):
             if result.get("mode") == "exploratory":
                 st.caption("⚠️ May include decreases — see mode note above.")
             if st.button("Apply optimized values to sliders"):
-                st.session_state.slider_values = dict(result["optimized_features"])
+                _set_sliders(res, gid, model, dict(result["optimized_features"]))
                 st.session_state.opt_result = None
                 st.rerun()
 

@@ -25,19 +25,33 @@ three_fourth-equivalent) for both data and architectural fidelity:
 - **Labels come from the outputLayer join, not the enriched export's own
   `Join_Count`.** Each resolution's enriched export (`*_variables_and_
   tent(s)_geo_enriched.csv`) carries a stale `Join_Count` from a
-  different/earlier spatial join. `prep.py` now merges each export with
-  its authoritative `outputLayer_0_{7,9,10}.csv` join table on
-  `OBJECTID` and takes `Join_Count` from *that* table — this reproduces
-  the paper's tent-present rates (25.21% / 38.59% / 46.38%) exactly.
-  (An earlier version of this pipeline grouped the enriched export by
-  `GRID_ID` and used its own `Join_Count`, which gave the wrong, higher
-  rates of 32.9% / 47.2% / 54.7% — see "Resolved gaps" below.)
-- **`GRID_ID` is not the same address scheme in both files** for the
-  same physical hex (`OBJECTID` is the reliable cross-file key; the two
-  files' `GRID_ID` values agree on only ~0.14% of hexes). `prep.py` keeps
-  the enriched export's own `GRID_ID` (paired with that row's own
-  lat/lon) for centroid reconstruction, while still using the
-  outputLayer's `Join_Count` for the label.
+  different/earlier spatial join. `prep.py` merges each export with its
+  authoritative `outputLayer_0_{7,9,10}.csv` join table and takes
+  `Join_Count` from *that* table — this reproduces the paper's
+  tent-present rates (25.21% / 38.59% / 46.38%) exactly.
+- **The cross-file join key is `GRID_ID`, not `OBJECTID` — this was
+  found and fixed after the numbers above were first reported.** An
+  earlier version of this pipeline joined the enriched export to the
+  outputLayer table on `OBJECTID`, reasoning that `OBJECTID` was the
+  reliable cross-file key and `GRID_ID` was not (the enriched export
+  has 2-4 rows per physical hex, one per street-view-image heading, so
+  a naive `GRID_ID` merge fans out). That reasoning had it backwards on
+  both counts, confirmed via direct geometry-equality and
+  `sjoin_nearest` spatial tests against fresh raw exports: `OBJECTID`
+  is each file's own independent row-counter with near-zero (~0.05-0.2%)
+  correspondence to the same physical hex across files, while `GRID_ID`
+  (e.g. `"AS-43"`) *is* the stable, ~100%-matching spatial address once
+  deduplicated within a file (every demographic/crime/facility/hazard/
+  climate feature column is byte-identical across a `GRID_ID`'s
+  duplicate rows — only per-photo metadata differs). The OBJECTID join
+  produced the *correct label rates* (they come straight from the
+  outputLayer side, which is unaffected) paired with *essentially
+  random features* — a data-correctness bug, not a rate bug, so it
+  didn't show up in any of the headline numbers below; only the
+  underlying feature-to-label pairing was wrong. `prep.py` now
+  deduplicates the enriched export by `GRID_ID` and joins on `GRID_ID`
+  on both sides. See "Resolved gaps" below for the retrained AUC deltas
+  this produced.
 - **Feature lists restored verbatim**, including the 0.25mi resolution's
   12 extra "raw Esri" columns. These are **not** duplicates of the
   similarly-named renamed columns — `outputLayer_0_7.csv` carries its
@@ -63,28 +77,39 @@ three_fourth-equivalent) for both data and architectural fidelity:
 
 ### Current fidelity
 
-Retrained on the corrected data/labels, matched against the reference
-notebook's own printed output for each resolution:
+An earlier version of this table reported RF/SNN-2 AUCs that matched the
+reference notebook's own printed output almost exactly. That match was
+real, but it was matching a bug: direct inspection of the reference
+notebook (`Latest_Tent_analysis.ipynb`) confirmed it performs the exact
+same `OBJECTID`-based cross-file join described above — so its own
+reported numbers were trained on the same randomly-mismatched
+feature/label pairing ours were. Reproducing them exactly was evidence
+we'd faithfully copied the reference pipeline, not evidence the pipeline
+was correct.
 
-| Resolution   | Hexes | Tent-present | RF teacher AUC (ours / ref) | SNN-2 AUC (ours / ref) |
-|--------------|------:|-------------:|:----------------------------|:------------------------|
-| quarter      | 1448  | 25.21%       | 0.7423 / 0.7423 (exact)     | 0.7788 / 0.776          |
-| half         |  767  | 38.59%       | 0.6054 / 0.6054 (exact)     | 0.7152 / 0.714          |
-| three_fourth |  539  | 46.38%       | 0.6143 / 0.6143 (exact)     | 0.7207 / 0.723          |
+The numbers below are retrained on the `GRID_ID`-joined, corrected data
+and **intentionally no longer match the reference notebook** — tent-
+present rates are unchanged (the label side was never wrong), but every
+AUC is now higher, most dramatically for half/three_fourth, which had
+the most severely scrambled features under the old join:
 
-Top selected interaction pair also matches the reference exactly for
-half (`pct_public_assistance × osm_amenity_count`) and three_fourth
-(`business_sites_count × bare_ground_proxy_pct`); quarter's top pair
-(`2023 Pop w/Income Below Poverty Level (ACS 5-Yr): Percent ×
-police_station_count`) was not independently cross-checked against a
-notebook printout (cell 49's own top-pair line was truncated in the
-available output) but its RF/SNN-2 AUCs match to 4 decimal places /
-within 0.003, so the underlying data and training are confirmed correct.
+| Resolution   | Hexes | Tent-present | RF teacher AUC (corrected / old-join reference) | SNN-2 AUC (corrected / old-join reference) |
+|--------------|------:|-------------:|:-------------------------------------------------|:---------------------------------------------|
+| quarter      | 1448  | 25.21%       | 0.7659 / 0.7423                                   | 0.7875 / 0.7788                               |
+| half         |  767  | 38.59%       | 0.7882 / 0.6054                                   | 0.8064 / 0.7152                               |
+| three_fourth |  539  | 46.38%       | 0.8244 / 0.6143                                   | 0.8351 / 0.7207                               |
+
+The top selected interaction pair also changed for half and three_fourth
+now that the correct features are attached to each label (previously
+`pct_public_assistance × osm_amenity_count` and `business_sites_count ×
+bare_ground_proxy_pct`; now `affordable_housing_count ×
+business_sites_count` for both) — see `models/snn2_feature_summary_
+{res}.csv` for the full ranked list per resolution.
 
 ### Resolved gaps (this rebuild)
 
-Two independent bugs were found and fixed against a fresh, complete copy
-of the reference notebook and fresh raw exports:
+Three independent bugs were found and fixed against a fresh, complete
+copy of the reference notebook and fresh raw exports:
 
 1. **Wrong label source** (all three resolutions) — described above.
    Fixed in `prep.py`'s `load_and_merge_hexes()`.
@@ -95,11 +120,19 @@ of the reference notebook and fresh raw exports:
    are not: the real columns come from `outputLayer_0_7.csv`'s own,
    independent second enrichment pass and disagree with the renamed
    columns on ~99% of rows. Faking them destroyed real signal the
-   reference RF was trained on, which is why quarter's RF teacher AUC
-   was stuck at 0.61 (vs the reference's 0.74) even after the label fix
-   above. `prep.py` now merges these columns in directly under their
-   real long names with their genuine values, and `QUARTER_ALIASES` has
-   been removed from `train_snn2.py` entirely.
+   reference RF was trained on. `prep.py` now merges these columns in
+   directly under their real long names with their genuine values, and
+   `QUARTER_ALIASES` has been removed from `train_snn2.py` entirely.
+3. **Wrong cross-file join key** (`OBJECTID` instead of `GRID_ID`, all
+   three resolutions, including the reference notebook itself) —
+   described above under "Architecture fidelity notes." This is the
+   fix behind the AUC jumps in "Current fidelity": every hex's label
+   was already correct, but was frequently paired with an unrelated
+   hex's demographic/crime/facility/hazard features. Fixed in `prep.py`
+   (dedup by `GRID_ID`, join on `GRID_ID`) and in `hexgeom.py` / the map
+   geometry build (see "Real hex geometry" below — the "roughly half
+   the hexes have no data" gaps reported in an earlier version of this
+   README turned out to be the same bug, not real missing coverage).
 
 ## What's in here
 
@@ -140,31 +173,31 @@ scripts/
 
 ## Real hex geometry (replacing the reconstructed approximation)
 
-The map now renders each resolution's **actual ArcGIS-exported hex
-polygons** (`data/hex_geom_{res}.geojson`), not the reconstructed
-regular-hexagon approximation the app used before. Two things fall out of
-that:
+The map renders each resolution's **actual ArcGIS-exported hex polygons**
+(`data/hex_geom_{res}.geojson`), not a reconstructed regular-hexagon
+approximation.
 
-- **Every ArcGIS hex is kept, not just the ones with model data.** Roughly
-  half of each resolution's raw hexes (1430/2878 quarter, 1544/2311 half,
-  1611/2150 three_fourth) never had a matching row in both the enriched
-  export and its `outputLayer_0_*` join table, so they carry no
-  `baseline_risk`/`tent_present`. Dropping them (the old behavior) made the
-  half/three_fourth maps look like disconnected islands with real gaps
-  between clusters; they're now kept in the geometry file and rendered as
-  flat "no data" hexes (gray fill, no risk color, non-clickable) so the
-  grid reads as one contiguous surface, the same way the reference deck's
-  own 0.25mi maps do — since there genuinely is no risk value for those
-  hexes, not because of a rendering bug.
-- **GRID_ID is not a unique key.** ~60% of hexes share their `GRID_ID`
-  address (e.g. quarter's OBJECTID 2 and 3 are both `AQ-81`) with at least
-  one other, physically different hex — an artifact of the raw export, not
-  something introduced here. `hexgeom.py`'s geometry merge joins on
-  `OBJECTID` (the only column that's 1:1 with a real hex in both the
-  geometry file and `hex_lookup_{res}.csv`) to avoid drawing the wrong
-  polygon's data. The rest of the app (hex selection via click / "jump to
-  a hex" dropdown / the optimizer) still keys off `GRID_ID`, which is a
-  pre-existing ambiguity worth knowing about but out of scope for this fix.
+- **Every physical hex now has real model data — there are no true
+  gaps.** An earlier version of this README reported that roughly half
+  of each resolution's raw hexes (1430/2878 quarter, 1544/2311 half,
+  1611/2150 three_fourth) had no matching row and carried no
+  `baseline_risk`/`tent_present`, and rendered those as flat gray
+  "no data" filler hexes so the map read as one contiguous surface. That
+  turned out to be the OBJECTID-join bug described above, not real
+  missing coverage: the raw counts above are the *un-deduplicated* row
+  counts (2-4 street-view-heading rows per physical hex), and once
+  deduplicated by `GRID_ID` every one of the study grid's 1448/767/539
+  physical hexes has a real, correctly-paired row in `hex_lookup_
+  {res}.csv` and a real polygon in `hex_geom_{res}.geojson` — confirmed
+  0 missing on rebuild for all three resolutions. The "no data" render
+  path (`has_data`) is kept in the schema/style function defensively but
+  should never actually fire on this data.
+- **GRID_ID and OBJECTID are both 1:1 with a real hex in these files.**
+  The enriched export's raw duplicate-`GRID_ID` rows (one per street-
+  view heading) are collapsed to a single row per physical hex during
+  prep, before either `hex_lookup_{res}.csv` or `hex_geom_{res}.geojson`
+  is written, so there's no remaining cross-file ambiguity between the
+  two identifiers in this app.
 
 ## Two ways to explore "what reduces risk," side by side
 
@@ -190,9 +223,15 @@ variables are ever touched.
 
 ## Known limitations
 
-1. Hex centroids/boundaries are reconstructed/approximate, not the
-   original ArcGIS tessellation geometry.
-2. Quarter's top selected interaction pair wasn't independently
-   cross-checked against a notebook printout (see "Current fidelity"
-   above) — everything else has been verified against the reference
-   notebook's own printed output.
+1. `centroid_lat`/`centroid_lon` (used for a couple of secondary display
+   purposes, not the map's polygons, which are now the real ArcGIS
+   geometry) are still an affine-regression approximation from each
+   hex's `GRID_ID` address, not surveyed centroids.
+2. This rebuild's numbers **intentionally diverge** from the reference
+   notebook's own printed output (see "Current fidelity" above) — the
+   reference notebook shares the same `OBJECTID`-join bug this rebuild
+   fixes, so no longer matching it is the point, not a regression. No
+   independent, bug-free ground truth outside this project's own data
+   was available to validate against beyond the internal checks
+   described above (GRID_ID cross-file correspondence, feature-column
+   identity across duplicate rows, geometry equality).

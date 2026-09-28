@@ -1,17 +1,19 @@
 """
 Real ArcGIS hex geometry for the Streamlit map.
 
-Each resolution's `hex_geom_{res}.geojson` (precomputed from the actual
-ArcGIS-exported hex layer, not a reconstructed approximation) covers the
-FULL tessellation ArcGIS produced -- roughly twice as many hexes as
-`hex_lookup_{res}.csv`, because only ~half of the raw hexes had a matching
-row in both the enriched export and the outputLayer join table (see
-prep.py / README "Resolved gaps"). The other half genuinely have no model
-data, not a rendering bug -- they're kept in the geometry file (flagged
-`has_data: false`) purely so the map reads as one contiguous grid instead
-of a patchwork of disconnected islands, matching how the reference deck's
-own 0.25mi maps look. They're rendered as flat "no data" hexes with no
-risk color, since there is no risk value to show.
+Each resolution's `hex_geom_{res}.geojson` is built (by scripts/
+rebuild_pipeline.py) from the real ArcGIS-exported hex polygons,
+deduplicated to one polygon per GRID_ID and joined 1:1 against
+`hex_lookup_{res}.csv`'s rows (both files share the same OBJECTID scheme
+because the geometry file is written directly from the same prepped
+dataframe). Every physical hex in the study grid has a `hex_lookup` row
+now -- the corrected GRID_ID-based join in prep.py resolved what earlier
+looked like ~half the hexes genuinely having no model data (see
+prep.py's module docstring / README "Resolved gaps"): that was an
+artifact of the old OBJECTID-based cross-file join, not real missing
+coverage. `has_data` is kept in the schema for the map's style function
+but is always true now; retained rather than removed so app.py's
+rendering path doesn't need touching.
 """
 import json
 import os
@@ -37,15 +39,12 @@ def hexes_to_geojson_real(geom_fc, display_df, risk_col="baseline_risk", id_col=
     null risk; the caller's style_function is expected to render those as
     plain "no data" hexes rather than coloring them by risk.
 
-    Joined on OBJECTID, not GRID_ID: GRID_ID is NOT a unique key in the
-    enriched export (~60% of hexes share their GRID_ID address with at
-    least one other, physically different hex -- e.g. quarter-resolution
-    OBJECTID 2 and 3 are both "AQ-81"). OBJECTID is the only column
-    guaranteed one-to-one with a real hex, in both the geometry file and
-    hex_lookup_{res}.csv, so it's the only safe join key here. GRID_ID is
-    still carried through purely for display (tooltip / dropdown), which
-    is a pre-existing ambiguity elsewhere in this app worth being aware
-    of, but out of scope for this geometry fix.
+    Joined on OBJECTID: both files are written from the same prepped
+    dataframe (see rebuild_pipeline.py), so OBJECTID and GRID_ID are both
+    1:1 with a real hex here -- the enriched export's raw duplicate-
+    GRID_ID rows (multiple street-view headings per physical hex) were
+    already collapsed to one row per hex during prep, before either file
+    was written.
     """
     from labels2 import FEATURE_LABELS_L2
     lookup = display_df.set_index(id_col)

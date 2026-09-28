@@ -1,15 +1,15 @@
-LogReg AUC (CV):     0.5699
-RF teacher AUC (CV): 0.6054
-SNN-1 AUC:           0.7129
-SNN-2 AUC:           0.7152
-SNN-2 AP:            0.6125
-Optimal threshold:   0.615
+LogReg AUC (CV):     0.7675
+RF teacher AUC (CV): 0.7882
+SNN-1 AUC:           0.7991
+SNN-2 AUC:           0.8064
+SNN-2 AP:            0.7284
+Optimal threshold:   0.609
 
               precision    recall  f1-score   support
 
-     no tent       0.75      0.73      0.74       471
-        tent       0.58      0.60      0.59       296
+     no tent       0.80      0.78      0.79       471
+        tent       0.66      0.69      0.67       296
 
-    accuracy                           0.68       767
-   macro avg       0.66      0.67      0.67       767
-weighted avg       0.68      0.68      0.68       767
+    accuracy                           0.74       767
+   macro avg       0.73      0.73      0.73       767
+weighted avg       0.75      0.74      0.75       767

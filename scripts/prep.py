@@ -3,16 +3,44 @@ Shared prep utilities for the LA Encampment Risk Digital Twin.
 
 Handles three things the raw exports don't give us for free:
   1. Merging each resolution's enriched export with its authoritative
-     outputLayer_0_* join table on OBJECTID -- the enriched export's own
-     Join_Count column is from a stale/different spatial join and does NOT
-     match the paper's reported tent-present rates (verified: our earlier
-     pipeline, which grouped the enriched export by GRID_ID and took
-     Join_Count directly from it, produced tent-present rates of
-     32.9/47.2/54.7% for quarter/half/three_fourth -- the outputLayer merge
-     below reproduces the reference notebook's 25.21/38.6/46.4% exactly).
+     outputLayer_0_* join table on GRID_ID (see "GRID_ID vs OBJECTID" below)
+     -- the enriched export's own Join_Count column is from a stale/
+     different spatial join and does NOT match the paper's reported
+     tent-present rates; the outputLayer merge below reproduces the
+     reference notebook's 25.21/38.6/46.4% exactly.
   2. Renaming raw Esri/ACS columns to the names the notebook's FEATURES lists expect.
   3. Reconstructing an approximate centroid for every hex (including zero-detection
      ones) from the GRID_ID column-letter/row-number address, via affine regression.
+
+GRID_ID vs OBJECTID (corrected join key, superseding an earlier version of
+this pipeline)
+-----------------------------------------------------------------------
+This pipeline previously joined the enriched export to the outputLayer
+table ON OBJECTID, on the assumption that OBJECTID was the reliable
+cross-file key and GRID_ID was not. Both halves of that assumption turned
+out to be backwards, confirmed by direct geometry-equality and
+sjoin_nearest spatial tests against fresh raw exports:
+  - OBJECTID is each file's own independent row-counter and has near-zero
+    (~0.05-0.2%) correspondence to the same physical hex across two
+    different ArcGIS export files. Joining on it silently pairs each
+    hex's label with another, unrelated hex's features -- the label
+    RATES it produces still looked right (they come straight from the
+    outputLayer side untouched) but the FEATURES attached to each label
+    were essentially random.
+  - GRID_ID (e.g. "AS-43") *is* the stable, ~100%-matching spatial
+    address across files, once deduplicated within a single file: the
+    enriched export carries 2-4 rows per physical hex, one per street-
+    view-image heading captured at that hex (confirmed: every
+    demographic/crime/facility/hazard/climate feature column is
+    byte-identical across a GRID_ID's duplicate rows; only per-photo
+    metadata -- filename, heading, lat/lon, address, source_run, and
+    sometimes tent_prediction_count -- differs), so keeping one row per
+    GRID_ID loses no feature information.
+  - The outputLayer table's GRID_ID set matches the deduplicated enriched
+    export's GRID_ID set exactly (1448/1448, 767/767, 539/539 for
+    quarter/half/three_fourth) -- outputLayer already covers every
+    physical hex in the study grid, including Join_Count == 0 hexes, not
+    just the ones with detections.
 """
 import re
 import numpy as np
@@ -58,31 +86,37 @@ def parse_grid_id(gid: str):
 
 def load_and_merge_hexes(enriched_csv_path: str, outputlayer_csv_path: str) -> pd.DataFrame:
     """Merge a resolution's enriched export with its authoritative outputLayer_0_*
-    join table on OBJECTID -- this is already exactly one row per hex on both
-    sides, so no groupby/dedup is needed (a prior version of this pipeline
-    grouped the enriched export by GRID_ID and took Join_Count directly from
-    it; that reproduced the *wrong*, higher tent-present rate -- see the
-    module docstring).
+    join table on GRID_ID (see module docstring for why this replaced an
+    OBJECTID-based join).
 
-    Join_Count / GRID_ID / TARGET_FID / ENRICH_FID collide between the two
-    files and get pandas's _x/_y suffixes:
-      - Join_Count: keep the outputLayer side (_x) -- it's the authoritative
+    The enriched export carries 2-4 rows per physical hex (one per street-
+    view heading); every non-photo feature column is identical across a
+    GRID_ID's duplicate rows, so we deduplicate it down to one row per
+    GRID_ID (keeping the first, arbitrarily -- it doesn't matter which,
+    since they're identical) before joining. The outputLayer table is
+    already exactly one row per GRID_ID on its own side.
+
+    Join_Count / TARGET_FID collide between the two files and get pandas's
+    suffixes:
+      - Join_Count: keep the outputLayer side -- it's the authoritative
         label source and matches the paper's tent-present rates exactly.
-      - GRID_ID: keep the enriched-export side (_y) -- it's paired with that
+      - OBJECTID: keep the enriched-export side -- it's paired with that
         same row's own latitude/longitude, which centroid reconstruction
-        below needs to stay internally consistent (the outputLayer's GRID_ID
-        uses a different addressing scheme and does not correspond to the
-        same lat/lon values).
-    Everything else _x/_y-suffixed (TARGET_FID, ENRICH_FID, ...) is just
-    duplicate metadata from the two Esri enrichment passes and is dropped.
+        below needs to stay internally consistent, and it's the column the
+        rest of the app (hexgeom.py, scenarios.py) uses as each hex's
+        unique in-file key.
+    Everything else suffixed is just duplicate metadata from the two Esri
+    enrichment passes and is dropped.
     """
     df_tent = pd.read_csv(outputlayer_csv_path)
     df_raw = pd.read_csv(enriched_csv_path)
-    merged = pd.merge(df_tent, df_raw, on="OBJECTID", how="inner")
+    df_raw = df_raw.sort_values("OBJECTID").drop_duplicates(subset="GRID_ID", keep="first")
 
-    merged = merged.assign(Join_Count=merged["Join_Count_x"], GRID_ID=merged["GRID_ID_y"])
+    merged = pd.merge(df_tent, df_raw, on="GRID_ID", how="inner", suffixes=("_tent", "_raw"))
+
+    merged = merged.assign(Join_Count=merged["Join_Count_tent"], OBJECTID=merged["OBJECTID_raw"])
     drop_suffixed = [c for c in merged.columns
-                      if c.endswith(("_x", "_y")) and c not in ("Join_Count", "GRID_ID")]
+                      if c.endswith(("_tent", "_raw")) and c not in ("Join_Count", "OBJECTID")]
     merged = merged.drop(columns=drop_suffixed)
     merged = merged.dropna(subset=["GRID_ID"]).copy()
 
