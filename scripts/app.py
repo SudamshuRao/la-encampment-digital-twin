@@ -188,17 +188,21 @@ def _top_n_markdown(ranked, n, title):
     st.markdown("\n\n".join(lines))
 
 
+INFO_BLOCK_HEIGHT = 290  # fixed so both charts below line up regardless of text length
+
+
 def render_contributions(model, contribs):
     main_contribs = {f: v for f, v in contribs.items() if f in model.base_features}
     inter_contribs = {f: v for f, v in contribs.items() if f not in model.base_features}
 
     c1, c2 = st.columns(2)
     with c1:
-        main_ranked = sorted(
-            ((FEATURE_LABELS_L2.get(f, f), v) for f, v in main_contribs.items()),
-            key=lambda kv: abs(kv[1]), reverse=True,
-        )
-        _top_n_markdown(main_ranked, 5, "Top 5 main effects")
+        with st.container(height=INFO_BLOCK_HEIGHT, border=False):
+            main_ranked = sorted(
+                ((FEATURE_LABELS_L2.get(f, f), v) for f, v in main_contribs.items()),
+                key=lambda kv: abs(kv[1]), reverse=True,
+            )
+            _top_n_markdown(main_ranked, 5, "Top 5 main effects")
 
         df = pd.DataFrame({
             "feature": [FEATURE_LABELS_L2.get(f, f) for f in main_contribs],
@@ -207,17 +211,18 @@ def render_contributions(model, contribs):
         st.altair_chart(_unlabeled_bar(df, "feature", "contribution", "Feature"),
                          use_container_width=True)
     with c2:
-        inter_labels = {name: interaction_label(*name.split("__x__")) for name in inter_contribs}
-        inter_ranked = sorted(inter_contribs.items(), key=lambda kv: kv[1], reverse=True)
-        top_positive = [(inter_labels[f], v) for f, v in inter_ranked if v > 0][:5]
-        top_negative = [(inter_labels[f], v) for f, v in reversed(inter_ranked) if v < 0][:5]
-        cc1, cc2 = st.columns(2)
-        with cc1:
-            _top_n_markdown(top_positive, 5, "Top 5 raising risk")
-        with cc2:
-            _top_n_markdown(top_negative, 5, "Top 5 lowering risk")
+        with st.container(height=INFO_BLOCK_HEIGHT, border=False):
+            inter_labels = {name: interaction_label(*name.split("__x__")) for name in inter_contribs}
+            inter_ranked = sorted(inter_contribs.items(), key=lambda kv: kv[1], reverse=True)
+            top_positive = [(inter_labels[f], v) for f, v in inter_ranked if v > 0][:5]
+            top_negative = [(inter_labels[f], v) for f, v in reversed(inter_ranked) if v < 0][:5]
+            cc1, cc2 = st.columns(2)
+            with cc1:
+                _top_n_markdown(top_positive, 5, "Top 5 raising risk")
+            with cc2:
+                _top_n_markdown(top_negative, 5, "Top 5 lowering risk")
+            st.caption("Pairwise terms selected during training (top-20 by RF importance).")
 
-        st.caption("Pairwise terms selected during training (top-20 by RF importance).")
         df2 = pd.DataFrame({
             "interaction": [inter_labels[f] for f in inter_contribs],
             "contribution": list(inter_contribs.values()),
