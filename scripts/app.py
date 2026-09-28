@@ -57,16 +57,14 @@ RISK_COLORMAP = cm.LinearColormap(colors=["#1a9850", "#fee08b", "#d73027"], vmin
 def add_basemap(m, basemap):
     """CartoDB's free positron/dark_matter tiles now require an API key
     (they show an 'API KEY REQUIRED' watermark without one), so this uses
-    tile providers that stay key-free: OpenStreetMap for light, Esri's
-    Dark Gray Canvas for dark."""
-    if basemap == "dark":
-        folium.TileLayer(
-            tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
-            attr="Esri, HERE, Garmin, FAO, NOAA, USGS",
-            name="dark",
-        ).add_to(m)
-    else:
-        folium.TileLayer(tiles="OpenStreetMap", name="light").add_to(m)
+    Esri's Canvas tile family instead -- muted grayscale, no key needed --
+    so the basemap stays out of the way and only the hexes carry color."""
+    canvas = "Dark_Gray_Base" if basemap == "dark" else "Light_Gray_Base"
+    folium.TileLayer(
+        tiles=f"https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/{canvas}/MapServer/tile/{{z}}/{{y}}/{{x}}",
+        attr="Esri, HERE, Garmin, FAO, NOAA, USGS",
+        name=basemap,
+    ).add_to(m)
 
 
 def _legend_bottom_left(colormap: cm.ColorMap) -> cm.ColorMap:
