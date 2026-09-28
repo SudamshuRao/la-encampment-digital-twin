@@ -59,7 +59,7 @@ def add_basemap(m, basemap):
     (they show an 'API KEY REQUIRED' watermark without one), so this uses
     Esri's Canvas tile family instead -- muted grayscale, no key needed --
     so the basemap stays out of the way and only the hexes carry color."""
-    canvas = "Dark_Gray_Base" if basemap == "dark" else "Light_Gray_Base"
+    canvas = "World_Dark_Gray_Base" if basemap == "dark" else "World_Light_Gray_Base"
     folium.TileLayer(
         tiles=f"https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/{canvas}/MapServer/tile/{{z}}/{{y}}/{{x}}",
         attr="Esri, HERE, Garmin, FAO, NOAA, USGS",
