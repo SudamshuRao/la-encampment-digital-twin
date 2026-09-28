@@ -43,6 +43,7 @@ def run_population_optimization(model, hex_df: pd.DataFrame, top_pct: float,
         for s in result["steps"]:
             usage_counts[s["feature"]] += 1
         rows.append({
+            "OBJECTID": hex_row["OBJECTID"],
             "GRID_ID": hex_row["GRID_ID"],
             "baseline_risk": result["baseline_risk"],
             "optimized_risk": result["optimized_risk"],
@@ -50,9 +51,15 @@ def run_population_optimization(model, hex_df: pd.DataFrame, top_pct: float,
             "n_steps_used": len(result["steps"]),
         })
 
+    # Joined on OBJECTID, not GRID_ID: GRID_ID is not a unique key in the raw
+    # export (see hexgeom.py / README), so a GRID_ID-keyed merge here can
+    # fan out into more rows than hex_df has whenever a duplicated GRID_ID
+    # falls on both sides of the join, which crashed this exact assignment
+    # ("Length of values does not match length of index"). OBJECTID is the
+    # only column guaranteed 1:1 with a real hex.
     results_df = pd.DataFrame(rows)
-    full = hex_df[["GRID_ID"]].copy()
-    full = full.merge(results_df, on="GRID_ID", how="left")
+    full = hex_df[["OBJECTID", "GRID_ID"]].copy()
+    full = full.merge(results_df.drop(columns="GRID_ID"), on="OBJECTID", how="left")
     full["is_target"] = target_mask.values
     full["baseline_risk"] = full["baseline_risk"].fillna(hex_df["baseline_risk"])
     full["optimized_risk"] = full["optimized_risk"].fillna(full["baseline_risk"])

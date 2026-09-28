@@ -209,7 +209,7 @@ def render_contributions(model, contribs):
             "contribution": list(main_contribs.values()),
         }).sort_values("contribution")
         st.altair_chart(_unlabeled_bar(df, "feature", "contribution", "Feature"),
-                         use_container_width=True)
+                         width='stretch')
     with c2:
         with st.container(height=INFO_BLOCK_HEIGHT, border=False):
             inter_labels = {name: interaction_label(*name.split("__x__")) for name in inter_contribs}
@@ -228,7 +228,7 @@ def render_contributions(model, contribs):
             "contribution": list(inter_contribs.values()),
         }).sort_values("contribution")
         st.altair_chart(_unlabeled_bar(df2, "interaction", "contribution", "Interaction"),
-                         use_container_width=True)
+                         width='stretch')
 
 
 def render_optimizer(model, feat_summary, res, gid):
@@ -305,7 +305,7 @@ def render_optimizer(model, feat_summary, res, gid):
                  "Intervention": f"{arrow[s['direction']]} {FEATURE_LABELS_L2.get(s['feature'], s['feature'])}",
                  "New value": f"{s['to_value']:.1f}", "Risk after": f"{s['risk_after']:.1%}",
                  "Change": f"{s['risk_delta']:+.2%}"} for s in result["steps"]])
-            st.dataframe(steps_df, hide_index=True, use_container_width=True)
+            st.dataframe(steps_df, hide_index=True, width='stretch')
             st.line_chart(pd.Series(result["risk_trajectory"], name="risk"))
             b1, b2 = st.columns(2)
             if b1.button("Apply all to sliders"):
@@ -326,7 +326,7 @@ def render_optimizer(model, feat_summary, res, gid):
                 {"Intervention": f"{arrow[s['direction']]} {FEATURE_LABELS_L2.get(s['feature'], s['feature'])}",
                  "New value": f"{s['to_value']:.1f}", "Risk after": f"{s['risk_after']:.1%}",
                  "Change": f"{s['risk_delta']:+.2%}"} for s in result["steps"]])
-            st.dataframe(steps_df, hide_index=True, use_container_width=True)
+            st.dataframe(steps_df, hide_index=True, width='stretch')
             st.line_chart(pd.Series(result["risk_trajectory"], name="risk"))
             if result.get("mode") == "exploratory":
                 st.caption("⚠️ May include decreases — see mode note above.")
@@ -337,7 +337,9 @@ def render_optimizer(model, feat_summary, res, gid):
 
 
 def build_delta_map(hex_df, res, results_df, basemap="light"):
-    merged = hex_df.merge(results_df[["GRID_ID", "delta", "is_target"]], on="GRID_ID")
+    # Joined on OBJECTID (the only column 1:1 with a real hex) rather than
+    # GRID_ID, which the raw export does not guarantee is unique.
+    merged = hex_df.merge(results_df[["OBJECTID", "delta", "is_target"]], on="OBJECTID")
     merged["baseline_risk"] = merged["delta"]  # reuse the risk_col slot for delta
 
     max_abs = max(abs(merged["baseline_risk"].min()), abs(merged["baseline_risk"].max()), 1e-6)
@@ -350,7 +352,10 @@ def build_delta_map(hex_df, res, results_df, basemap="light"):
     gj = hexes_to_geojson_real(load_geom(res), merged, risk_col="baseline_risk")
     no_data_fill = "#3a3f4b" if basemap == "dark" else "#dcdcdc"
     no_data_border = "#55596a" if basemap == "dark" else "#bbbbbb"
-    target_lookup = merged.set_index("GRID_ID")["is_target"]
+    # Keyed by OBJECTID, not GRID_ID -- merged can contain two rows sharing
+    # the same GRID_ID, which would make a GRID_ID-indexed lookup here
+    # return a Series instead of a scalar and crash the bool() below.
+    target_lookup = merged.set_index("OBJECTID")["is_target"]
 
     def style_fn(feature):
         props = feature["properties"]
@@ -360,7 +365,7 @@ def build_delta_map(hex_df, res, results_df, basemap="light"):
                 "weight": 0.2, "fillOpacity": 0.35, "opacity": 0.25,
             }
         risk = props["risk"]  # actually delta here
-        is_target = bool(target_lookup.get(props["GRID_ID"], False))
+        is_target = bool(target_lookup.get(props["OBJECTID"], False))
         return {
             "fillColor": delta_cmap(risk),
             "color": "#4d4d4d" if basemap == "light" else "#ffffff",
@@ -524,7 +529,7 @@ def main():
                 f"lowering risk by {abs(top_decrease[1]):.1%} (contribution)"
             )
 
-        if st.button("Reset sliders to real values", use_container_width=True):
+        if st.button("Reset sliders to real values", width='stretch'):
             st.session_state.slider_values = None
             st.session_state.opt_result = None
             st.rerun()

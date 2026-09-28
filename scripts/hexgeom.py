@@ -77,7 +77,8 @@ def hexes_to_geojson_real(geom_fc, display_df, risk_col="baseline_risk", id_col=
         features.append({
             "type": "Feature",
             "properties": {
-                "GRID_ID": gid if gid is not None else f"OBJ-{props_in['OBJECTID']}",
+                "OBJECTID": oid,
+                "GRID_ID": gid if gid is not None else f"OBJ-{oid}",
                 "risk": risk,
                 "risk_display": risk_display,
                 "tent_present": tent_present,
