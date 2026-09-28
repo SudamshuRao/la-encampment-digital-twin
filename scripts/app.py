@@ -136,6 +136,7 @@ def build_map(hex_df, res, selected_grid_id, current_risk_override=None, basemap
 
 
 def render_sliders(model, feat_summary, res, gid):
+    gen = st.session_state.get("slider_gen", 0)
     for group in GROUP_ORDER_L2:
         group_feats = [f for f in model.base_features if FEATURE_GROUPS_L2.get(f) == group]
         if not group_feats:
@@ -158,7 +159,7 @@ def render_sliders(model, feat_summary, res, gid):
                     with col:
                         new_val = st.slider(
                             FEATURE_LABELS_L2.get(f, f), min_value=lo, max_value=hi,
-                            value=val, step=step, key=f"slider_{res}_{gid}_{f}",
+                            value=val, step=step, key=f"slider_{res}_{gid}_{f}_{gen}",
                         )
                     st.session_state.slider_values[f] = new_val
 
@@ -192,17 +193,22 @@ INFO_BLOCK_HEIGHT = 290  # fixed so both charts below line up regardless of text
 
 
 def _set_sliders(res, gid, model, new_values):
-    """Replace slider_values AND clear each slider widget's own stored
-    state. A slider with an explicit key only honors `value=` the first
-    time it's created -- once dragged, Streamlit remembers its position
-    under that key and ignores `value=` on every later rerun, so setting
-    slider_values alone updates "Predicted risk" but leaves the widgets
-    showing their old positions (which then overwrite slider_values right
-    back). Call this instead of assigning st.session_state.slider_values
-    directly whenever sliders should visibly jump to new values."""
-    for f in model.base_features:
-        st.session_state.pop(f"slider_{res}_{gid}_{f}", None)
+    """Replace slider_values AND force every slider widget to remount as a
+    brand-new widget next render, by bumping a generation counter baked
+    into each slider's `key` (see render_sliders).
+
+    Popping a widget's session_state entry is NOT enough to reset it: the
+    browser caches each widget's last-dragged value client-side and
+    resends it to the server as part of the SAME interaction round-trip
+    that runs this callback, which can silently overwrite slider_values
+    right back to the old position even though the server-side key was
+    deleted. Changing the key itself is the only way to guarantee the
+    widget the browser renders next has no cached value to resend --
+    it's a genuinely new widget, not a reset of the old one. Call this
+    instead of assigning st.session_state.slider_values directly whenever
+    sliders should visibly jump to new values."""
     st.session_state.slider_values = new_values
+    st.session_state.slider_gen = st.session_state.get("slider_gen", 0) + 1
 
 
 def render_contributions(model, contribs):
@@ -474,6 +480,7 @@ def main():
         st.session_state.selected_res = res
         st.session_state.selected_grid_id = hex_df.loc[hex_df["baseline_risk"].idxmax(), "GRID_ID"]
         st.session_state.slider_values = None
+        st.session_state.slider_gen = st.session_state.get("slider_gen", 0) + 1
         st.session_state.opt_result = None
         st.session_state.scenario_results = None
         st.session_state.scenario_summary = None
@@ -487,6 +494,7 @@ def main():
         if picked != st.session_state.selected_grid_id:
             st.session_state.selected_grid_id = picked
             st.session_state.slider_values = None
+            st.session_state.slider_gen = st.session_state.get("slider_gen", 0) + 1
             st.session_state.opt_result = None
 
     selected_row = hex_df[hex_df["GRID_ID"] == st.session_state.selected_grid_id].iloc[0]
@@ -512,6 +520,7 @@ def main():
             if clicked_gid != st.session_state.selected_grid_id and clicked_gid in hex_df["GRID_ID"].values:
                 st.session_state.selected_grid_id = clicked_gid
                 st.session_state.slider_values = None
+                st.session_state.slider_gen = st.session_state.get("slider_gen", 0) + 1
                 st.session_state.opt_result = None
                 st.rerun()
 
@@ -544,18 +553,17 @@ def main():
             )
 
         if st.button("Reset sliders to real values", width='stretch'):
-            # A slider with an explicit key only honors `value=` the first
-            # time it's created -- once dragged, Streamlit remembers its
-            # position under that key and ignores `value=` on every later
-            # rerun. So clearing slider_values alone resets "Predicted
-            # risk" (computed earlier in the script) but leaves the widget
-            # showing its old dragged position, which then immediately
-            # overwrites slider_values right back on the same rerun.
-            # Deleting each widget's own key forces it to re-initialize
-            # from the real value next render.
-            for f in model.base_features:
-                st.session_state.pop(f"slider_{res}_{gid}_{f}", None)
+            # Popping each widget's session_state key is NOT reliable here:
+            # the browser caches each slider's last-dragged value
+            # client-side and resends it as part of this SAME click's
+            # round-trip, which can silently overwrite slider_values right
+            # back to the old position even after the server-side key is
+            # deleted. Bumping slider_gen changes every slider's `key`
+            # (see render_sliders/_set_sliders), so the widget rendered
+            # next is a genuinely new one the browser has no cached value
+            # for -- the only fully reliable way to force a visible reset.
             st.session_state.slider_values = None
+            st.session_state.slider_gen = st.session_state.get("slider_gen", 0) + 1
             st.session_state.opt_result = None
             st.rerun()
 
