@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 import streamlit as st
 import pandas as pd
 import numpy as np
+import altair as alt
 import folium
 import branca.colormap as cm
 from jinja2 import Template as _JinjaTemplate
@@ -162,27 +163,67 @@ def render_sliders(model, feat_summary, res, gid):
                     st.session_state.slider_values[f] = new_val
 
 
+def _unlabeled_bar(df, cat_col, val_col, tooltip_label):
+    """Bar chart with no axis/tick labels (hover tooltip only), colored red
+    for contributions that raise risk and green for ones that lower it."""
+    return (
+        alt.Chart(df)
+        .mark_bar()
+        .encode(
+            x=alt.X(f"{cat_col}:N", axis=None, sort=None),
+            y=alt.Y(f"{val_col}:Q", axis=alt.Axis(title=None)),
+            color=alt.condition(f"datum.{val_col} >= 0", alt.value("#d73027"), alt.value("#1a9850")),
+            tooltip=[alt.Tooltip(f"{cat_col}:N", title=tooltip_label),
+                     alt.Tooltip(f"{val_col}:Q", title="Contribution", format="+.1%")],
+        )
+        .properties(height=280)
+    )
+
+
+def _top_n_markdown(ranked, n, title):
+    lines = [f"**{title}**"]
+    for label, val in ranked[:n]:
+        arrow = "🔺" if val >= 0 else "🔻"
+        lines.append(f"{arrow} {label}: **{val:+.1%}**")
+    st.markdown("\n\n".join(lines))
+
+
 def render_contributions(model, contribs):
     main_contribs = {f: v for f, v in contribs.items() if f in model.base_features}
     inter_contribs = {f: v for f, v in contribs.items() if f not in model.base_features}
 
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown("**Main-effect contributions**")
+        main_ranked = sorted(
+            ((FEATURE_LABELS_L2.get(f, f), v) for f, v in main_contribs.items()),
+            key=lambda kv: abs(kv[1]), reverse=True,
+        )
+        _top_n_markdown(main_ranked, 5, "Top 5 main effects")
+
         df = pd.DataFrame({
             "feature": [FEATURE_LABELS_L2.get(f, f) for f in main_contribs],
             "contribution": list(main_contribs.values()),
         }).sort_values("contribution")
-        st.bar_chart(df.set_index("feature"), height=420)
+        st.altair_chart(_unlabeled_bar(df, "feature", "contribution", "Feature"),
+                         use_container_width=True)
     with c2:
-        st.markdown("**Interaction-effect contributions**")
-        st.caption("Pairwise terms selected during training (top-20 by RF importance).")
         inter_labels = {name: interaction_label(*name.split("__x__")) for name in inter_contribs}
+        inter_ranked = sorted(inter_contribs.items(), key=lambda kv: kv[1], reverse=True)
+        top_positive = [(inter_labels[f], v) for f, v in inter_ranked if v > 0][:5]
+        top_negative = [(inter_labels[f], v) for f, v in reversed(inter_ranked) if v < 0][:5]
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            _top_n_markdown(top_positive, 5, "Top 5 raising risk")
+        with cc2:
+            _top_n_markdown(top_negative, 5, "Top 5 lowering risk")
+
+        st.caption("Pairwise terms selected during training (top-20 by RF importance).")
         df2 = pd.DataFrame({
             "interaction": [inter_labels[f] for f in inter_contribs],
             "contribution": list(inter_contribs.values()),
         }).sort_values("contribution")
-        st.bar_chart(df2.set_index("interaction"), height=420)
+        st.altair_chart(_unlabeled_bar(df2, "interaction", "contribution", "Interaction"),
+                         use_container_width=True)
 
 
 def render_optimizer(model, feat_summary, res, gid):
