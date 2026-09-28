@@ -530,6 +530,17 @@ def main():
             )
 
         if st.button("Reset sliders to real values", width='stretch'):
+            # A slider with an explicit key only honors `value=` the first
+            # time it's created -- once dragged, Streamlit remembers its
+            # position under that key and ignores `value=` on every later
+            # rerun. So clearing slider_values alone resets "Predicted
+            # risk" (computed earlier in the script) but leaves the widget
+            # showing its old dragged position, which then immediately
+            # overwrites slider_values right back on the same rerun.
+            # Deleting each widget's own key forces it to re-initialize
+            # from the real value next render.
+            for f in model.base_features:
+                st.session_state.pop(f"slider_{res}_{gid}_{f}", None)
             st.session_state.slider_values = None
             st.session_state.opt_result = None
             st.rerun()
