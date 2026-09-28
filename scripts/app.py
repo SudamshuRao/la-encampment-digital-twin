@@ -54,6 +54,21 @@ def load_feature_summary(res):
 RISK_COLORMAP = cm.LinearColormap(colors=["#1a9850", "#fee08b", "#d73027"], vmin=0.0, vmax=1.0)
 
 
+def add_basemap(m, basemap):
+    """CartoDB's free positron/dark_matter tiles now require an API key
+    (they show an 'API KEY REQUIRED' watermark without one), so this uses
+    tile providers that stay key-free: OpenStreetMap for light, Esri's
+    Dark Gray Canvas for dark."""
+    if basemap == "dark":
+        folium.TileLayer(
+            tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+            attr="Esri, HERE, Garmin, FAO, NOAA, USGS",
+            name="dark",
+        ).add_to(m)
+    else:
+        folium.TileLayer(tiles="OpenStreetMap", name="light").add_to(m)
+
+
 def _legend_bottom_left(colormap: cm.ColorMap) -> cm.ColorMap:
     src = colormap._template.environment.loader.get_source(
         colormap._template.environment, "color_scale.js")[0]
@@ -70,8 +85,8 @@ def build_map(hex_df, res, selected_grid_id, current_risk_override=None, basemap
     rmin, rmax = hex_df["baseline_risk"].quantile([0.05, 0.95])
     center_lat, center_lon = hex_df["centroid_lat"].mean(), hex_df["centroid_lon"].mean()
 
-    tiles = "cartodbdark_matter" if basemap == "dark" else "cartodbpositron"
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=10, tiles=tiles)
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=10, tiles=None)
+    add_basemap(m, basemap)
     Fullscreen(position="topright").add_to(m)
 
     display_df = hex_df.copy()
@@ -283,8 +298,8 @@ def build_delta_map(hex_df, res, results_df, basemap="light"):
 
     max_abs = max(abs(merged["baseline_risk"].min()), abs(merged["baseline_risk"].max()), 1e-6)
     center_lat, center_lon = merged["centroid_lat"].mean(), merged["centroid_lon"].mean()
-    tiles = "cartodbdark_matter" if basemap == "dark" else "cartodbpositron"
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=10, tiles=tiles)
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=10, tiles=None)
+    add_basemap(m, basemap)
     Fullscreen(position="topright").add_to(m)
 
     delta_cmap = cm.LinearColormap(colors=["#d73027", "#f7f7f7", "#1a9850"], vmin=-max_abs, vmax=max_abs)
