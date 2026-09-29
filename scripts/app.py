@@ -1,11 +1,11 @@
 """
-LA Encampment Risk Digital Twin -- SNN-2
+Interactive Digital Twin for LA Encampment Vulnerability -- SNN-2
 Zoomable map of LA hex grid -> click (or pick) a hex -> adjust its
-contextual variables with sliders -> see SNN-2's predicted encampment
-risk update live, decomposed into main-effect AND interaction-effect
-contributions. Presentation-friendly layout: map + risk + headline
-interaction always visible up top, everything else organized into tabs
-instead of one long scroll.
+contextual variables with sliders -> see SNN-2's predicted vulnerability
+update live, decomposed into main-effect AND interaction-effect
+contributions. Presentation-friendly layout: map + vulnerability +
+headline interaction always visible up top, everything else organized
+into tabs instead of one long scroll.
 """
 import sys
 import os
@@ -30,7 +30,7 @@ from labels2 import (
 from optimizer2 import greedy_optimize_snn2, is_actionable_step_l2, actionable_subset_risk_l2
 from scenarios import run_population_optimization
 
-st.set_page_config(page_title="LA Encampment Risk Digital Twin", layout="wide")
+st.set_page_config(page_title="LA Encampment Vulnerability Digital Twin", layout="wide")
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "models")
@@ -121,7 +121,7 @@ def build_map(hex_df, res, selected_grid_id, current_risk_override=None, basemap
         highlight_function=lambda f: {"weight": 2.5, "color": selected_border} if f["properties"]["has_data"] else {},
         tooltip=folium.GeoJsonTooltip(
             fields=["GRID_ID", "risk_display", "top_interaction"],
-            aliases=["Hex", "Predicted risk", "Top interaction"],
+            aliases=["Hex", "Predicted vulnerability", "Top interaction"],
             style=("background-color: white; color: #333; font-family: sans-serif; "
                    "font-size: 13px; padding: 6px; border-radius: 4px;"),
         ),
@@ -129,7 +129,7 @@ def build_map(hex_df, res, selected_grid_id, current_risk_override=None, basemap
     ).add_to(m)
 
     legend = RISK_COLORMAP.scale(rmin, rmax)
-    legend.caption = "Predicted encampment risk"
+    legend.caption = "Predicted encampment vulnerability"
     legend = _legend_bottom_left(legend)
     legend.add_to(m)
     return m
@@ -166,7 +166,8 @@ def render_sliders(model, feat_summary, res, gid):
 
 def _unlabeled_bar(df, cat_col, val_col, tooltip_label):
     """Bar chart with no axis/tick labels (hover tooltip only), colored red
-    for contributions that raise risk and green for ones that lower it."""
+    for contributions that raise vulnerability and green for ones that
+    lower it."""
     return (
         alt.Chart(df)
         .mark_bar()
@@ -182,11 +183,20 @@ def _unlabeled_bar(df, cat_col, val_col, tooltip_label):
 
 
 def _top_n_markdown(ranked, n, title):
-    lines = [f"**{title}**"]
+    """Renders as colored HTML, not the 🔺/🔻 emoji: those are fixed-palette
+    Unicode glyphs (both render red regardless of surrounding text color),
+    so a 'lowering' list built from them showed red triangles even though
+    the underlying values were decreasing vulnerability. Plain ▲/▼
+    characters inherit an inline style's color instead, so red genuinely
+    means increasing and green genuinely means decreasing here."""
+    rows = []
     for label, val in ranked[:n]:
-        arrow = "🔺" if val >= 0 else "🔻"
-        lines.append(f"{arrow} {label}: **{val:+.1%}**")
-    st.markdown("\n\n".join(lines))
+        increasing = val >= 0
+        color = "#d73027" if increasing else "#1a9850"
+        arrow = "▲" if increasing else "▼"
+        rows.append(f'<div style="color:{color}">{arrow} {label}: <b>{val:+.1%}</b></div>')
+    html = f"<p><b>{title}</b></p>" + "".join(rows)
+    st.markdown(html, unsafe_allow_html=True)
 
 
 INFO_BLOCK_HEIGHT = 290  # fixed so both charts below line up regardless of text length
@@ -217,12 +227,17 @@ def render_contributions(model, contribs):
 
     c1, c2 = st.columns(2)
     with c1:
+        st.markdown("**Main effects**")
         with st.container(height=INFO_BLOCK_HEIGHT, border=False):
-            main_ranked = sorted(
-                ((FEATURE_LABELS_L2.get(f, f), v) for f, v in main_contribs.items()),
-                key=lambda kv: abs(kv[1]), reverse=True,
-            )
-            _top_n_markdown(main_ranked, 5, "Top 5 main effects")
+            main_labeled = [(FEATURE_LABELS_L2.get(f, f), v) for f, v in main_contribs.items()]
+            main_ranked = sorted(main_labeled, key=lambda kv: kv[1], reverse=True)
+            main_increasing = [(l, v) for l, v in main_ranked if v > 0][:5]
+            main_decreasing = [(l, v) for l, v in reversed(main_ranked) if v < 0][:5]
+            cc1, cc2 = st.columns(2)
+            with cc1:
+                _top_n_markdown(main_increasing, 5, "Top 5 increasing vulnerability")
+            with cc2:
+                _top_n_markdown(main_decreasing, 5, "Top 5 decreasing vulnerability")
 
         df = pd.DataFrame({
             "feature": [FEATURE_LABELS_L2.get(f, f) for f in main_contribs],
@@ -231,6 +246,7 @@ def render_contributions(model, contribs):
         st.altair_chart(_unlabeled_bar(df, "feature", "contribution", "Feature"),
                          width='stretch')
     with c2:
+        st.markdown("**Interaction effects**")
         with st.container(height=INFO_BLOCK_HEIGHT, border=False):
             inter_labels = {name: interaction_label(*name.split("__x__")) for name in inter_contribs}
             inter_ranked = sorted(inter_contribs.items(), key=lambda kv: kv[1], reverse=True)
@@ -238,9 +254,9 @@ def render_contributions(model, contribs):
             top_negative = [(inter_labels[f], v) for f, v in reversed(inter_ranked) if v < 0][:5]
             cc1, cc2 = st.columns(2)
             with cc1:
-                _top_n_markdown(top_positive, 5, "Top 5 raising risk")
+                _top_n_markdown(top_positive, 5, "Top 5 increasing vulnerability")
             with cc2:
-                _top_n_markdown(top_negative, 5, "Top 5 lowering risk")
+                _top_n_markdown(top_negative, 5, "Top 5 decreasing vulnerability")
             st.caption("Pairwise terms selected during training (top-20 by RF importance).")
 
         df2 = pd.DataFrame({
@@ -255,9 +271,9 @@ def render_optimizer(model, feat_summary, res, gid):
     opt_mode = st.radio(
         "Mode", ["actionable", "exploratory", "combined"],
         format_func=lambda m: {
-            "actionable": "Actionable only (increase-only)",
-            "exploratory": "Exploratory (increase or decrease)",
-            "combined": "Combined — both directions, tagged",
+            "actionable": "Realistic Interventions Only",
+            "exploratory": "Full Range (Math Only)",
+            "combined": "Both, Clearly Labeled",
         }[m],
         key=f"optmode_{res}_{gid}", horizontal=True,
     )
@@ -274,12 +290,12 @@ def render_optimizer(model, feat_summary, res, gid):
                        "as real intervention ideas.",
         "exploratory": "⚠️ Allows +1 or -1 moves. A decrease (e.g. fewer libraries) isn't a "
                         "realistic intervention either — this shows what the fitted surface "
-                        "says minimizes risk mathematically within the non-frozen set, not a "
-                        "real-world action list.",
-        "combined": "Same non-frozen variable set and both directions as Exploratory, but "
+                        "says minimizes vulnerability mathematically within the non-frozen "
+                        "set, not a real-world action list.",
+        "combined": "Same non-frozen variable set and both directions as Full Range, but "
                     "every step is tagged ✅ Actionable (an increase) or ⚠️ Correlational "
-                    "(a decrease), with a separate re-scored 'actionable-only' risk. A shared "
-                    "K budget means large decreases can crowd out realistic increases.",
+                    "(a decrease), with a separate re-scored 'actionable-only' vulnerability. "
+                    "A shared K budget means large decreases can crowd out realistic increases.",
     }
     st.caption(captions[opt_mode])
 
@@ -311,11 +327,11 @@ def render_optimizer(model, feat_summary, res, gid):
         result = st.session_state.opt_result
         arrow = {"up": "↑", "down": "↓"}
         if not result["steps"]:
-            st.info("No available move reduces risk further from the current slider values.")
+            st.info("No available move reduces vulnerability further from the current slider values.")
             return
         if result.get("mode") == "combined":
             m1, m2 = st.columns(2)
-            m1.metric("Full optimized risk", f"{result['optimized_risk']:.1%}",
+            m1.metric("Full optimized vulnerability", f"{result['optimized_risk']:.1%}",
                        f"{result['optimized_risk'] - result['baseline_risk']:+.1%}")
             m2.metric("Actionable-only achievable", f"{result['actionable_subset_risk']:.1%}",
                        f"{result['actionable_subset_risk'] - result['baseline_risk']:+.1%} "
@@ -323,10 +339,10 @@ def render_optimizer(model, feat_summary, res, gid):
             steps_df = pd.DataFrame([
                 {"Tag": "✅ Actionable" if is_actionable_step_l2(s["feature"], s["direction"], FEATURE_GROUPS_L2, ACTIONABLE_GROUPS_L2) else "⚠️ Correlational",
                  "Intervention": f"{arrow[s['direction']]} {FEATURE_LABELS_L2.get(s['feature'], s['feature'])}",
-                 "New value": f"{s['to_value']:.1f}", "Risk after": f"{s['risk_after']:.1%}",
+                 "New value": f"{s['to_value']:.1f}", "Vulnerability after": f"{s['risk_after']:.1%}",
                  "Change": f"{s['risk_delta']:+.2%}"} for s in result["steps"]])
             st.dataframe(steps_df, hide_index=True, width='stretch')
-            st.line_chart(pd.Series(result["risk_trajectory"], name="risk"))
+            st.line_chart(pd.Series(result["risk_trajectory"], name="vulnerability"))
             b1, b2 = st.columns(2)
             if b1.button("Apply all to sliders"):
                 _set_sliders(res, gid, model, dict(result["optimized_features"]))
@@ -340,14 +356,14 @@ def render_optimizer(model, feat_summary, res, gid):
                 st.session_state.opt_result = None
                 st.rerun()
         else:
-            st.metric("Optimized risk", f"{result['optimized_risk']:.1%}",
+            st.metric("Optimized vulnerability", f"{result['optimized_risk']:.1%}",
                        f"{result['optimized_risk'] - result['baseline_risk']:+.1%} over {len(result['steps'])} step(s)")
             steps_df = pd.DataFrame([
                 {"Intervention": f"{arrow[s['direction']]} {FEATURE_LABELS_L2.get(s['feature'], s['feature'])}",
-                 "New value": f"{s['to_value']:.1f}", "Risk after": f"{s['risk_after']:.1%}",
+                 "New value": f"{s['to_value']:.1f}", "Vulnerability after": f"{s['risk_after']:.1%}",
                  "Change": f"{s['risk_delta']:+.2%}"} for s in result["steps"]])
             st.dataframe(steps_df, hide_index=True, width='stretch')
-            st.line_chart(pd.Series(result["risk_trajectory"], name="risk"))
+            st.line_chart(pd.Series(result["risk_trajectory"], name="vulnerability"))
             if result.get("mode") == "exploratory":
                 st.caption("⚠️ May include decreases — see mode note above.")
             if st.button("Apply optimized values to sliders"):
@@ -397,7 +413,7 @@ def build_delta_map(hex_df, res, results_df, basemap="light"):
     folium.GeoJson(
         gj, style_function=style_fn,
         tooltip=folium.GeoJsonTooltip(
-            fields=["GRID_ID", "risk_display"], aliases=["Hex", "ΔRisk (+ = improved)"],
+            fields=["GRID_ID", "risk_display"], aliases=["Hex", "ΔVulnerability (+ = improved)"],
             style=("background-color: white; color: #333; font-family: sans-serif; "
                    "font-size: 13px; padding: 6px; border-radius: 4px;"),
         ),
@@ -405,7 +421,7 @@ def build_delta_map(hex_df, res, results_df, basemap="light"):
     ).add_to(m)
 
     legend = delta_cmap.scale(-max_abs, max_abs)
-    legend.caption = "ΔRisk from population optimization (bold outline = targeted hex)"
+    legend.caption = "ΔVulnerability from population optimization (bold outline = targeted hex)"
     legend = _legend_bottom_left(legend)
     legend.add_to(m)
     return m
@@ -418,7 +434,7 @@ def render_scenarios(model, hex_df, feat_summary, res, basemap):
         "**Scenario inputs** = every other (Facilities/Services) variable is eligible — "
         "the doc names Affordable Housing / Food Access / selected service-amenity access "
         "as examples, not an exhaustive list, so all Facilities/Services variables are "
-        "candidates here. Applied only to the highest-risk hexes, not the whole grid."
+        "candidates here. Applied only to the highest-vulnerability hexes, not the whole grid."
     )
 
     candidates = [f for f in model.base_features if FEATURE_GROUPS_L2.get(f) in ACTIONABLE_GROUPS_L2
@@ -427,7 +443,7 @@ def render_scenarios(model, hex_df, feat_summary, res, basemap):
                ", ".join(FEATURE_LABELS_L2.get(f, f) for f in candidates))
 
     c1, c2 = st.columns(2)
-    top_pct = c1.slider("Apply to top X% highest-risk hexes", 5, 30, 10, key=f"scen_pct_{res}") / 100
+    top_pct = c1.slider("Apply to top X% highest-vulnerability hexes", 5, 30, 10, key=f"scen_pct_{res}") / 100
     k = c2.slider("Max interventions per hex (K)", 1, 10, 3, key=f"scen_k_{res}")
 
     if st.button("Run population optimization", type="primary", key=f"scen_run_{res}"):
@@ -446,13 +462,13 @@ def render_scenarios(model, hex_df, feat_summary, res, basemap):
         st.markdown("**Population result (targeted hexes only)**")
         m1, m2, m3 = st.columns(3)
         m1.metric("Hexes targeted", summary["n_hexes_targeted"])
-        m2.metric("Mean baseline risk", f"{summary['mean_baseline_risk_targeted']:.1%}")
-        m3.metric("Mean optimized risk", f"{summary['mean_optimized_risk_targeted']:.1%}",
+        m2.metric("Mean baseline vulnerability", f"{summary['mean_baseline_risk_targeted']:.1%}")
+        m3.metric("Mean optimized vulnerability", f"{summary['mean_optimized_risk_targeted']:.1%}",
                    f"{-summary['mean_reduction_targeted']:+.2%}")
 
         col_map, col_usage = st.columns([3, 2])
         with col_map:
-            st.markdown("**ΔRisk map**")
+            st.markdown("**ΔVulnerability map**")
             m = build_delta_map(hex_df, res, results, basemap=basemap)
             st_folium(m, height=480, width=None, returned_objects=[], key=f"scen_map_{res}")
         with col_usage:
@@ -464,7 +480,7 @@ def render_scenarios(model, hex_df, feat_summary, res, basemap):
 
 
 def main():
-    st.title("LA Encampment Risk — Interactive Digital Twin (SNN-2)")
+    st.title("Interactive Digital Twin for LA Encampment Vulnerability")
 
     with st.sidebar:
         st.header("Grid resolution")
@@ -534,22 +550,22 @@ def main():
         baseline_risk = float(selected_row["baseline_risk"])
         delta = risk - baseline_risk
         m1, m2 = st.columns(2)
-        m1.metric("Predicted risk", f"{risk:.1%}", f"{delta:+.1%} vs. real values")
+        m1.metric("Predicted vulnerability", f"{risk:.1%}", f"{delta:+.1%} vs. real values")
         m2.metric("Baseline (real values)", f"{baseline_risk:.1%}")
 
         if top_increase[0] and top_increase[1] > 0:
             a, b = top_increase[0].split("__x__")
             st.error(
-                f"**Top interaction increasing risk:**\n\n"
+                f"**Top interaction increasing vulnerability:**\n\n"
                 f"{interaction_label(a, b)}\n\n"
-                f"raising risk by {top_increase[1]:.1%} (contribution)"
+                f"raising vulnerability by {top_increase[1]:.1%} (contribution)"
             )
         if top_decrease[0] and top_decrease[1] < 0:
             a, b = top_decrease[0].split("__x__")
             st.success(
-                f"**Top interaction lowering risk:**\n\n"
+                f"**Top interaction lowering vulnerability:**\n\n"
                 f"{interaction_label(a, b)}\n\n"
-                f"lowering risk by {abs(top_decrease[1]):.1%} (contribution)"
+                f"lowering vulnerability by {abs(top_decrease[1]):.1%} (contribution)"
             )
 
         if st.button("Reset sliders to real values", width='stretch'):
