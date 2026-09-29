@@ -293,8 +293,8 @@ def render_optimizer(model, feat_summary, res, gid):
                         "says minimizes vulnerability mathematically within the non-frozen "
                         "set, not a real-world action list.",
         "combined": "Same non-frozen variable set and both directions as Full Range, but "
-                    "every step is tagged ✅ Actionable (an increase) or ⚠️ Correlational "
-                    "(a decrease), with a separate re-scored 'actionable-only' vulnerability. "
+                    "every step is tagged ✅ Realistic (an increase) or ⚠️ Correlational "
+                    "(a decrease), with a separate re-scored 'realistic-only' vulnerability. "
                     "A shared K budget means large decreases can crowd out realistic increases.",
     }
     st.caption(captions[opt_mode])
@@ -333,11 +333,11 @@ def render_optimizer(model, feat_summary, res, gid):
             m1, m2 = st.columns(2)
             m1.metric("Full optimized vulnerability", f"{result['optimized_risk']:.1%}",
                        f"{result['optimized_risk'] - result['baseline_risk']:+.1%}")
-            m2.metric("Actionable-only achievable", f"{result['actionable_subset_risk']:.1%}",
+            m2.metric("Realistic-only achievable", f"{result['actionable_subset_risk']:.1%}",
                        f"{result['actionable_subset_risk'] - result['baseline_risk']:+.1%} "
                        f"({len(result['actionable_subset_steps'])} real action(s))")
             steps_df = pd.DataFrame([
-                {"Tag": "✅ Actionable" if is_actionable_step_l2(s["feature"], s["direction"], FEATURE_GROUPS_L2, ACTIONABLE_GROUPS_L2) else "⚠️ Correlational",
+                {"Tag": "✅ Realistic" if is_actionable_step_l2(s["feature"], s["direction"], FEATURE_GROUPS_L2, ACTIONABLE_GROUPS_L2) else "⚠️ Correlational",
                  "Intervention": f"{arrow[s['direction']]} {FEATURE_LABELS_L2.get(s['feature'], s['feature'])}",
                  "New value": f"{s['to_value']:.1f}", "Vulnerability after": f"{s['risk_after']:.1%}",
                  "Change": f"{s['risk_delta']:+.2%}"} for s in result["steps"]])
@@ -348,7 +348,7 @@ def render_optimizer(model, feat_summary, res, gid):
                 _set_sliders(res, gid, model, dict(result["optimized_features"]))
                 st.session_state.opt_result = None
                 st.rerun()
-            if b2.button("Apply actionable-only to sliders"):
+            if b2.button("Apply realistic-only to sliders"):
                 updated = dict(st.session_state.slider_values)
                 for s in result["actionable_subset_steps"]:
                     updated[s["feature"]] = s["to_value"]
